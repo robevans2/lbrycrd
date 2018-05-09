@@ -1664,7 +1664,8 @@ bool CClaimTrieCache::removeClaim(const std::string& name, const COutPoint& outP
     if (removed == true)
     {
         nValidAtHeight = claim.nValidAtHeight;
-        removeFromExpirationQueue(name, outPoint, nHeight);
+        int expirationHeight = nHeight + base->nExpirationTime;
+        removeFromExpirationQueue(name, outPoint, expirationHeight);
     }
     return removed;
 }
@@ -1684,9 +1685,8 @@ void CClaimTrieCache::addToExpirationQueue(int nExpirationHeight, nameOutPointTy
     }
 }
 
-void CClaimTrieCache::removeFromExpirationQueue(const std::string& name, const COutPoint& outPoint, int nHeight) const
+void CClaimTrieCache::removeFromExpirationQueue(const std::string& name, const COutPoint& outPoint, int expirationHeight) const
 {
-    int expirationHeight = nHeight + base->nExpirationTime;
     expirationQueueType::iterator itQueueRow = getExpirationQueueCacheRow(expirationHeight, false);
     expirationQueueRowType::iterator itQueue;
     if (itQueueRow != expirationQueueCache.end())
@@ -2082,6 +2082,7 @@ bool CClaimTrieCache::spendSupport(const std::string& name, const COutPoint& out
 bool CClaimTrieCache::incrementBlock(insertUndoType& insertUndo, claimQueueRowType& expireUndo, insertUndoType& insertSupportUndo, supportQueueRowType& expireSupportUndo, std::vector<std::pair<std::string, int> >& takeoverHeightUndo) const
 {
     LogPrintf("%s: nCurrentHeight (before increment): %d\n", __func__, nCurrentHeight);
+
     claimQueueType::iterator itQueueRow = getQueueCacheRow(nCurrentHeight, false);
     if (itQueueRow != claimQueueCache.end())
     {
@@ -2399,6 +2400,7 @@ bool CClaimTrieCache::decrementBlock(insertUndoType& insertUndo, claimQueueRowTy
     {
         cacheTakeoverHeights[itTakeoverHeightUndo->first] = itTakeoverHeightUndo->second;
     }
+
     return true;
 }
 
@@ -2587,3 +2589,69 @@ CClaimTrieProof CClaimTrieCache::getProofForName(const std::string& name) const
     return CClaimTrieProof(nodes, fNameHasValue, outPoint,
                            nHeightOfLastTakeover);
 }
+
+
+void CClaimTrieCache::removeAndAddToExpirationQueue(expirationQueueRowType &row, int height, bool increment) const
+{
+    for (expirationQueueRowType::iterator e = row.begin(); e != row.end(); ++e)
+    {
+        // remove and insert with new expiration time
+        removeFromExpirationQueue(e->name, e->outPoint, height);
+        int extend_expiration = Params().GetConsensus().nExtendedClaimExpirationTime - Params().GetConsensus().nOriginalClaimExpirationTime;
+        int new_expiration_height = increment ? height + extend_expiration : height - extend_expiration;
+        nameOutPointType entry(e->name, e->outPoint);
+        addToExpirationQueue(new_expiration_height, entry);
+    }
+
+}
+
+bool CClaimTrieCache::forkForExpirationChange(bool increment) const
+{
+    /*
+    If increment is True, we have forked to extend the expiration time, thus items in the expiration queue
+    will have their expiration extended by "new expiration time - original expiraiton time"
+
+    If increment is False, we are decremented a block to reverse the fork. Thus items in the expiration queue
+    will have their expiration extension removed.
+    */
+
+    // look through dirty expiration queues
+    std::set<int> dirtyHeights;
+    for (expirationQueueType::const_iterator i = base->dirtyExpirationQueueRows.begin(); i != base->dirtyExpirationQueueRows.end(); ++i)
+    {
+        int height = i->first;
+        dirtyHeights.insert(height);
+        expirationQueueRowType row = i->second;
+        removeAndAddToExpirationQueue(row, height, increment);
+    }
+
+    //look through db for expiration queues, if we haven't already found it in dirty expiraiton queue
+    boost::scoped_ptr<CDBIterator> pcursor(const_cast<CDBWrapper*>(&base->db)->NewIterator());
+    pcursor->SeekToFirst();
+    while (pcursor->Valid())
+    {
+        std::pair<char, int> key;
+        if (pcursor->GetKey(key))
+        {
+            int height = key.second;
+            // if we've looked throught this in dirtyExprirationQueueRows, don't use it
+            // because its stale
+            if ((key.first == EXP_QUEUE_ROW) & (dirtyHeights.count(height) == 0))
+            {
+                expirationQueueRowType row;
+                if (pcursor->GetValue(row))
+                {
+                    removeAndAddToExpirationQueue(row, height, increment);
+                }
+                else
+                {
+                    return error("%s(): error reading expiration queue rows from disk", __func__);
+                }
+            }
+        }
+        pcursor->Next();
+    }
+
+    return true;
+}
+
