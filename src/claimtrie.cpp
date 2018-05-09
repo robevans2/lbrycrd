@@ -2011,8 +2011,17 @@ bool CClaimTrieCache::removeSupport(const std::string& name, const COutPoint& ou
 
 void CClaimTrieCache::addSupportToExpirationQueue(int nExpirationHeight, nameOutPointType& entry) const
 {
-    expirationQueueType::iterator itQueueRow = getSupportExpirationQueueCacheRow(nExpirationHeight, true);
-    itQueueRow->second.push_back(entry);
+    // NOTE: To disable expiration completely after fork, set this define to enable check
+    // #define CLAIM_EXPIRATION_DISABLED_AFTER_FORK
+    #ifdef CLAIM_EXPIRATION_DISABLED_AFTER_FORK
+    const Consensus::Params& consensusParams = Params().GetConsensus();
+    if ((nExpirationHeight < consensusParams.nExtendedClaimExpirationForkHeight) ||
+        (base->nCurrentHeight < consensusParams.nExtendedClaimExpirationForkHeight))
+    #endif
+    {
+        expirationQueueType::iterator itQueueRow = getSupportExpirationQueueCacheRow(nExpirationHeight, true);
+        itQueueRow->second.push_back(entry);
+    }
 }
 
 void CClaimTrieCache::removeSupportFromExpirationQueue(const std::string& name, const COutPoint& outPoint, int nHeight) const
