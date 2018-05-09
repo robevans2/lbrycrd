@@ -2071,6 +2071,11 @@ bool CClaimTrieCache::spendSupport(const std::string& name, const COutPoint& out
 bool CClaimTrieCache::incrementBlock(insertUndoType& insertUndo, claimQueueRowType& expireUndo, insertUndoType& insertSupportUndo, supportQueueRowType& expireSupportUndo, std::vector<std::pair<std::string, int> >& takeoverHeightUndo) const
 {
     LogPrintf("%s: nCurrentHeight (before increment): %d\n", __func__, nCurrentHeight);
+    if(nCurrentHeight+1 == Params().GetConsensus().nExtendedClaimExpirationForkHeight)
+    {
+        forkForExpirationChange(true);
+    }
+
     claimQueueType::iterator itQueueRow = getQueueCacheRow(nCurrentHeight, false);
     if (itQueueRow != claimQueueCache.end())
     {
@@ -2388,6 +2393,11 @@ bool CClaimTrieCache::decrementBlock(insertUndoType& insertUndo, claimQueueRowTy
     {
         cacheTakeoverHeights[itTakeoverHeightUndo->first] = itTakeoverHeightUndo->second;
     }
+
+    if(nCurrentHeight == Params().GetConsensus().nExtendedClaimExpirationForkHeight)
+    {
+        forkForExpirationChange(false);
+    }
     return true;
 }
 
@@ -2576,3 +2586,61 @@ CClaimTrieProof CClaimTrieCache::getProofForName(const std::string& name) const
     return CClaimTrieProof(nodes, fNameHasValue, outPoint,
                            nHeightOfLastTakeover);
 }
+
+
+void CClaimTrieCache::removeAndAddToExpirationQueue(expirationQueueRowType &row, int height, bool increment) const
+{
+    for (expirationQueueRowType::iterator e = row.begin(); e != row.end(); ++e)
+    {
+        // remove and insert with new expiration time
+        removeFromExpirationQueue(e->name, e->outPoint, height);
+        int extend_expiration = Params().GetConsensus().nExtendedClaimExpirationTime;
+        int new_expiration_height = increment ? height + extend_expiration : height - extend_expiration;
+        nameOutPointType entry(e->name, e->outPoint);
+        addToExpirationQueue(new_expiration_height, entry);
+    }
+
+}
+
+bool CClaimTrieCache::forkForExpirationChange(bool increment) const
+{
+    // when forking and incrementing make sure we run this before any new claims get inserted
+    // when forking and decrementing make sure this get run last
+
+    //look through db for expiration queues
+    boost::scoped_ptr<CDBIterator> pcursor(const_cast<CDBWrapper*>(&base->db)->NewIterator());
+    pcursor->SeekToFirst();
+    while (pcursor->Valid())
+    {
+        std::pair<char, int> key;
+        if (pcursor->GetKey(key))
+        {
+            if (key.first == EXP_QUEUE_ROW)
+            {
+                int height = key.second;
+                expirationQueueRowType row;
+                if (pcursor->GetValue(row))
+                {
+                    removeAndAddToExpirationQueue(row, height, increment);
+                }
+                else
+                {
+                    return error("%s(): error reading expiration queue rows from disk", __func__);
+                }
+            }
+        }
+        pcursor->Next();
+    }
+
+    // look through dirty expiration
+    for (expirationQueueType::const_iterator i = base->dirtyExpirationQueueRows.begin(); i != base->dirtyExpirationQueueRows.end(); ++i)
+    {
+        int height = i->first;        
+        expirationQueueRowType row = i->second;
+        removeAndAddToExpirationQueue(row, height, increment);
+    }
+
+
+    return true;
+}
+
