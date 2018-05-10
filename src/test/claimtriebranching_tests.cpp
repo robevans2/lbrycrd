@@ -845,11 +845,11 @@ BOOST_AUTO_TEST_CASE(claimtriebranching_no_expire)
     fixture.IncrementBlocks(1);
 
     // make sure that claim created 1 block before the fork expires as expected
-    // at the original expiration times
+    // at the extended expiration times
     BOOST_CHECK(is_best_claim("test2", tx2));
-    fixture.IncrementBlocks(originalExpiration-1);
+    fixture.IncrementBlocks(extendedExpiration-1);
     BOOST_CHECK(!is_best_claim("test2", tx2));
-    fixture.DecrementBlocks(originalExpiration-1);
+    fixture.DecrementBlocks(extendedExpiration-1);
 
     // This first claim is still expired since it's pre-fork, even
     // after fork activation
