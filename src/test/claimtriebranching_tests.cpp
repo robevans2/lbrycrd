@@ -828,32 +828,46 @@ BOOST_AUTO_TEST_CASE(claimtriebranching_no_expire)
     fixture.IncrementBlocks(originalExpiration);
     BOOST_CHECK(!is_best_claim("test",tx1));
 
-    // Create a claim that will expire after the fork height
-    fixture.IncrementBlocks(expirationForkHeight - chainActive.Height() -1);
+    // Create a claim 1 block before the fork height that will expire after the fork height
+    fixture.IncrementBlocks(expirationForkHeight - chainActive.Height() -2);
     CMutableTransaction tx2 = fixture.MakeClaim(fixture.GetCoinbase(),"test2","one",3);
+    fixture.IncrementBlocks(1);
+    BOOST_CHECK_EQUAL(chainActive.Height(), expirationForkHeight -1);
 
     // Disable future expirations and fast-forward past the fork height
     fixture.IncrementBlocks(1);
+    BOOST_CHECK_EQUAL(chainActive.Height(), expirationForkHeight);
     BOOST_CHECK_EQUAL(pclaimTrie->nExpirationTime, extendedExpiration);
+    // make sure decrementing to before the fork height will apppropriately set back the
+    // expiration time to the original expiraiton time
+    fixture.DecrementBlocks(1);
+    BOOST_CHECK_EQUAL(pclaimTrie->nExpirationTime, originalExpiration);
+    fixture.IncrementBlocks(1);
 
-    // make sure that claim created before the fork expires as expected
+    // make sure that claim created 1 block before the fork expires as expected
     // at the original expiration times
     BOOST_CHECK(is_best_claim("test2", tx2));
-    fixture.IncrementBlocks(originalExpiration);
+    fixture.IncrementBlocks(originalExpiration-1);
     BOOST_CHECK(!is_best_claim("test2", tx2));
-    fixture.DecrementBlocks(originalExpiration);
-    BOOST_CHECK(is_best_claim("test2", tx2));
+    fixture.DecrementBlocks(originalExpiration-1);
 
     // This first claim is still expired since it's pre-fork, even
     // after fork activation
     BOOST_CHECK(!is_best_claim("test",tx1));
 
-    // This new claim cannot expire
+    // This new claim created at the fork height cannot expire at original expiration
+    BOOST_CHECK_EQUAL(chainActive.Height(), expirationForkHeight);
     CMutableTransaction tx3 = fixture.MakeClaim(fixture.GetCoinbase(),"test","one",1);
-    fixture.IncrementBlocks(originalExpiration+1);
-
+    fixture.IncrementBlocks(1);
+    fixture.IncrementBlocks(originalExpiration);
     BOOST_CHECK(is_best_claim("test",tx3));
     BOOST_CHECK(!is_best_claim("test",tx1));
+    fixture.DecrementBlocks(originalExpiration);
+
+    // but it expires at the extended expiration
+    fixture.IncrementBlocks(extendedExpiration);
+    BOOST_CHECK(!is_best_claim("test",tx3));
+    fixture.DecrementBlocks(extendedExpiration);
 
     // Ensure that we cannot update the original pre-fork expired claim
     CMutableTransaction u1 = fixture.MakeUpdate(tx1,"test","two",ClaimIdHash(tx1.GetHash(),0), 3);

@@ -2232,8 +2232,12 @@ bool DisconnectBlock(const CBlock& block, CValidationState& state, const CBlockI
     assert(trieCache.finalizeDecrement());
     trieCache.setBestBlock(pindex->pprev->GetBlockHash());
     assert(trieCache.getMerkleHash() == pindex->pprev->hashClaimTrie);
-    if (pindex->pprev->nHeight >= Params().GetConsensus().nExtendedClaimExpirationForkHeight)
-        pclaimTrie->setExpirationTime(Params().GetConsensus().GetExpirationTime(pindex->pprev->nHeight));
+    if (pindex->nHeight == Params().GetConsensus().nExtendedClaimExpirationForkHeight)
+    {
+        LogPrintf("Decremented past the fork v13 fork height");
+        pclaimTrie->setExpirationTime(Params().GetConsensus().GetExpirationTime(pindex->nHeight-1));
+    }
+
 
     if (pfClean) {
         *pfClean = fClean;
@@ -2494,6 +2498,14 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
         flags |= SCRIPT_VERIFY_CHECKSEQUENCEVERIFY;
         nLockTimeFlags |= LOCKTIME_VERIFY_SEQUENCE;
     }
+ 
+    // v 13 LBRYcrd hard fork to extend expiration time
+    if (pindex->nHeight == Params().GetConsensus().nExtendedClaimExpirationForkHeight)
+    {
+        LogPrintf("Incremented past the fork v13 fork height");
+        pclaimTrie->setExpirationTime(chainparams.GetConsensus().GetExpirationTime(pindex->nHeight));
+    }
+
 
     int64_t nTime2 = GetTimeMicros(); nTimeForks += nTime2 - nTime1;
     LogPrint("bench", "    - Fork checks: %.2fms [%.2fs]\n", 0.001 * (nTime2 - nTime1), nTimeForks * 0.000001);
@@ -2771,8 +2783,6 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     // add this block to the view's block chain
     view.SetBestBlock(pindex->GetBlockHash());
     trieCache.setBestBlock(pindex->GetBlockHash());
-    if (pindex->nHeight >= Params().GetConsensus().nExtendedClaimExpirationForkHeight)
-        pclaimTrie->setExpirationTime(chainparams.GetConsensus().GetExpirationTime(pindex->nHeight));
 
     int64_t nTime5 = GetTimeMicros(); nTimeIndex += nTime5 - nTime4;
     LogPrint("bench", "    - Index writing: %.2fms [%.2fs]\n", 0.001 * (nTime5 - nTime4), nTimeIndex * 0.000001);
